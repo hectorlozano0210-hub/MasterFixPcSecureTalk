@@ -15,6 +15,14 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
   const [sosActive, setSosActive] = useState(false);
   const [msgCount, setMsgCount] = useState(0);
   
+  const socketRef = useRef(null);
+  const isTouchActiveRef = useRef(false);
+
+  // Patrón de envoltura de referencias para evitar cierres obsoletos (stale closures)
+  const handleMainButtonPressRef = useRef(null);
+  const handleMainButtonReleaseRef = useRef(null);
+  const sendSOSRef = useRef(null);
+  const handleHeadsetClickRef = useRef(null);
   // TTS Queue State
   const [pendingTexts, setPendingTexts] = useState([]);
   const [isReadingTTS, setIsReadingTTS] = useState(false);
@@ -64,6 +72,14 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
     localStorage.setItem('mfx_shake_enabled', shakeEnabled);
   }, [shakeEnabled]);
 
+  // Mantener las referencias a los controladores siempre actualizadas en cada render
+  useEffect(() => {
+    handleMainButtonPressRef.current = handleMainButtonPress;
+    handleMainButtonReleaseRef.current = handleMainButtonRelease;
+    sendSOSRef.current = sendSOS;
+    handleHeadsetClickRef.current = handleHeadsetClick;
+  });
+
   useEffect(() => {
     const fetchCount = async () => {
       const c = await getDailyMessageCount();
@@ -93,7 +109,7 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
     if (headsetClickCountRef.current >= 2) {
       // PÁNICO DETECTADO: 2 o más clics rápidos
       console.log(`[SOS HEADSET] Pánico detectado: ${headsetClickCountRef.current} clics rápidos consecutivos. Activando SOS...`);
-      sendSOS();
+      if (sendSOSRef.current) sendSOSRef.current();
       
       // Limpiamos contador tras un delay para absorber clicks adicionales de pánico
       headsetClickTimeoutRef.current = setTimeout(() => {
@@ -105,9 +121,9 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
         if (headsetClickCountRef.current === 1) {
           console.log("[SOS HEADSET] Un solo click validado. Alternando transmisión.");
           if (isRecordingRef.current) {
-            handleMainButtonRelease();
+            if (handleMainButtonReleaseRef.current) handleMainButtonReleaseRef.current();
           } else {
-            handleMainButtonPress();
+            if (handleMainButtonPressRef.current) handleMainButtonPressRef.current();
           }
         }
         headsetClickCountRef.current = 0;
@@ -142,10 +158,18 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
             title: 'MFX Walkie-Talkie',
             artist: 'Canal ' + session.channel,
           });
-          navigator.mediaSession.setActionHandler('play', handleHeadsetClick);
-          navigator.mediaSession.setActionHandler('pause', handleHeadsetClick);
-          navigator.mediaSession.setActionHandler('nexttrack', handleHeadsetClick);
-          navigator.mediaSession.setActionHandler('previoustrack', handleHeadsetClick);
+          
+          // Usamos una envoltura estable que invoque la referencia dinámica para evitar cierres obsoletos
+          const mediaSessionWrapper = (details) => {
+            if (handleHeadsetClickRef.current) {
+              handleHeadsetClickRef.current(details);
+            }
+          };
+
+          navigator.mediaSession.setActionHandler('play', mediaSessionWrapper);
+          navigator.mediaSession.setActionHandler('pause', mediaSessionWrapper);
+          navigator.mediaSession.setActionHandler('nexttrack', mediaSessionWrapper);
+          navigator.mediaSession.setActionHandler('previoustrack', mediaSessionWrapper);
           navigator.mediaSession.playbackState = 'playing';
         }
         setIsSintonizado(true);
@@ -180,6 +204,7 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
     const newSocket = io(SOCKET_SERVER_URL, {
       transports: ['websocket']
     });
+    socketRef.current = newSocket;
     setSocket(newSocket);
 
     newSocket.on('connect', () => {
@@ -247,13 +272,13 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
     const handleKeyDown = (e) => {
       if (e.code === 'Space' && !e.repeat && !isRecordingRef.current) {
         e.preventDefault();
-        handleMainButtonPress();
+        if (handleMainButtonPressRef.current) handleMainButtonPressRef.current(e);
       }
     };
     const handleKeyUp = (e) => {
       if (e.code === 'Space') {
         e.preventDefault();
-        handleMainButtonRelease();
+        if (handleMainButtonReleaseRef.current) handleMainButtonReleaseRef.current(e);
       }
     };
 
@@ -263,7 +288,7 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
     const handleMediaKeys = (e) => {
       if (e.key === 'MediaPlayPause') {
         e.preventDefault();
-        handleHeadsetClick({ action: 'playpause' });
+        if (handleHeadsetClickRef.current) handleHeadsetClickRef.current({ action: 'playpause' });
       }
     };
     window.addEventListener('keydown', handleMediaKeys);
@@ -292,7 +317,7 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
           
           if (shakeCount >= 3) {
             console.log("[SHAKE SOS] Sacudida exitosa. ¡Activando SOS!");
-            sendSOS();
+            if (sendSOSRef.current) sendSOSRef.current();
             shakeCount = 0;
           }
           
@@ -311,6 +336,7 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
     return () => {
       if (wakeLock) wakeLock.release();
       newSocket.disconnect();
+      socketRef.current = null;
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('keydown', handleMediaKeys);
@@ -394,7 +420,18 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
     speakNext();
   };
 
-  const handleMainButtonPress = () => {
+  const handleMainButtonPress = (e) => {
+    if (e) {
+      const isTouch = e.type === 'touchstart' || (e.nativeEvent && e.nativeEvent.touches);
+      if (isTouch) {
+        isTouchActiveRef.current = true;
+        if (e.cancelable) e.preventDefault();
+      } else if (isTouchActiveRef.current) {
+        // Ignorar evento de mouse emulado en dispositivo móvil
+        return;
+      }
+    }
+
     if (sosActive) return; // Si hay SOS, debe reconocerlo primero
     if (window.speechSynthesis.speaking) return; // Evitar pisar la lectura
     
@@ -431,7 +468,21 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
     }
   };
 
-  const handleMainButtonRelease = () => {
+  const handleMainButtonRelease = (e) => {
+    if (e) {
+      const isTouch = e.type === 'touchend' || e.type === 'touchcancel';
+      if (isTouch) {
+        if (e.cancelable) e.preventDefault();
+        // Delay para liberar el bloqueo táctil y absorber el evento de mouse emulado posterior
+        setTimeout(() => {
+          isTouchActiveRef.current = false;
+        }, 500);
+      } else if (isTouchActiveRef.current) {
+        // Ignorar evento de mouse emulado
+        return;
+      }
+    }
+
     if (isRecordingRef.current) stopRecording();
   };
 
@@ -441,7 +492,9 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
     // Verificación de Licencia Free
     if (session.license?.type === 'free' && msgCount >= 10) {
       setStatusMsg("LÍMITE DIARIO (FREE)");
-      setTimeout(() => setStatusMsg("Standby"), 3000);
+      setTimeout(() => {
+        setStatusMsg(current => current.includes("LÍMITE") ? "Standby" : current);
+      }, 3000);
       return;
     }
 
@@ -466,8 +519,8 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
         }
 
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        if (socket && socket.connected) {
-           socket.emit('audio_message', { audioBlob });
+        if (socketRef.current && socketRef.current.connected) {
+           socketRef.current.emit('audio_message', { audioBlob });
         } else {
            console.log("No conectado. Audio descartado o guardado para reintento.");
         }
@@ -507,7 +560,7 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
 
       if (navigator.vibrate) navigator.vibrate([50, 50, 50]);
       setTimeout(() => {
-        if (!isReceiving && !sosActive && pendingTexts.length === 0) setStatusMsg("Standby");
+        setStatusMsg(current => current.includes("Enviado") ? "Standby" : current);
       }, 2000);
     }
   };
@@ -519,7 +572,7 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
       setIsRecording(false);
       setStatusMsg("Llamada cancelada");
       setTimeout(() => {
-        if (!isReceiving && !sosActive && pendingTexts.length === 0) setStatusMsg("Standby");
+        setStatusMsg(current => current.includes("cancelada") ? "Standby" : current);
       }, 1500);
     }
   };
@@ -532,8 +585,8 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
       }
       lastSOSSentRef.current = now;
 
-      if (socket && socket.connected) {
-         socket.emit('sos_alert');
+      if (socketRef.current && socketRef.current.connected) {
+         socketRef.current.emit('sos_alert');
       }
       
       setStatusMsg("🚨 SOS ENVIADO 🚨");
@@ -542,7 +595,7 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
       }
       
       setTimeout(() => {
-        if (!sosActive) setStatusMsg("Standby");
+        setStatusMsg(current => current.includes("SOS ENVIADO") ? "Standby" : current);
       }, 3000);
   };
 
