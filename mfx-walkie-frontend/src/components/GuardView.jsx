@@ -27,6 +27,7 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
   const clickTimeoutRef = useRef(null);
   const clickCountRef = useRef(0);
   const silentAudioRef = useRef(null);
+  const silentAudioCtxRef = useRef(null);
   
   // Ref para controlar el estado actual dentro de los event listeners del teclado
   const isRecordingRef = useRef(false);
@@ -60,20 +61,67 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
     };
     requestWakeLock();
 
-    // Crear y reproducir un bucle de audio silencioso para mantener activa la sesión multimedia (MediaSession)
-    // Esto es crucial para que Android/iOS no desvíe el clic del manos libres a Gemini/Siri o música externa
-    const silentAudio = new Audio("data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA");
-    silentAudio.loop = true;
-    silentAudio.volume = 0.05; // Bajo volumen para mantener activa la sesión sin molestar
-    
-    const playSilentAudio = () => {
-      silentAudio.play().catch(err => {
-        console.warn("Silent audio play blocked or failed:", err);
-      });
+    // Crear un bucle de silencio infinito usando Web Audio API y MediaStream para garantizar que Chrome en Android/iOS
+    // considere que la sesión multimedia (MediaSession) está activamente "reproduciendo" un flujo continuo (duración > 5s).
+    // Esto es crucial para evitar que el sistema operativo secuestre los toques del manos libres para abrir Gemini/Siri.
+    let silentAudioCtx = null;
+    let silentAudio = null;
+
+    const startSilentLoop = () => {
+      try {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContextClass) return;
+
+        silentAudioCtx = new AudioContextClass();
+        const destination = silentAudioCtx.createMediaStreamDestination();
+        
+        // Creamos un oscilador inaudible para obligar a que el flujo tenga datos constantes
+        const oscillator = silentAudioCtx.createOscillator();
+        const gainNode = silentAudioCtx.createGain();
+        gainNode.gain.value = 0.0001; // Volumen inaudible pero existente para el motor de audio
+        oscillator.connect(gainNode);
+        gainNode.connect(destination);
+        oscillator.start();
+
+        silentAudio = new Audio();
+        silentAudio.srcObject = destination.stream;
+        silentAudio.volume = 0.05;
+        
+        const playAudio = () => {
+          silentAudio.play().then(() => {
+            console.log("🚀 Bucle de silencio infinito iniciado exitosamente.");
+            if ('mediaSession' in navigator) {
+              navigator.mediaSession.playbackState = 'playing';
+            }
+          }).catch(err => {
+            console.warn("⚠️ Autoplay del bucle de silencio bloqueado por el navegador. Se activará al primer toque en la pantalla:", err);
+          });
+        };
+
+        playAudio();
+
+        // En caso de que el navegador bloquee el autoplay inicial, lo activamos ante cualquier interacción táctil
+        const enableOnInteraction = () => {
+          if (silentAudioCtx && silentAudioCtx.state === 'suspended') {
+            silentAudioCtx.resume();
+          }
+          if (silentAudio) {
+            playAudio();
+          }
+          window.removeEventListener('click', enableOnInteraction);
+          window.removeEventListener('touchstart', enableOnInteraction);
+        };
+        window.addEventListener('click', enableOnInteraction);
+        window.addEventListener('touchstart', enableOnInteraction);
+
+        silentAudioRef.current = silentAudio;
+        silentAudioCtxRef.current = silentAudioCtx;
+      } catch (err) {
+        console.error("Error al iniciar bucle de silencio infinito:", err);
+      }
     };
-    
-    playSilentAudio();
-    silentAudioRef.current = silentAudio;
+
+    startSilentLoop();
 
     const newSocket = io(SOCKET_SERVER_URL, {
       transports: ['websocket']
@@ -204,7 +252,12 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
       }
       if (silentAudioRef.current) {
         silentAudioRef.current.pause();
+        silentAudioRef.current.srcObject = null;
         silentAudioRef.current = null;
+      }
+      if (silentAudioCtxRef.current) {
+        silentAudioCtxRef.current.close();
+        silentAudioCtxRef.current = null;
       }
     };
   }, [session]);
