@@ -24,10 +24,29 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
   const audioChunksRef = useRef([]);
   const audioPlayerRef = useRef(new Audio());
   const alarmRef = useRef(null);
-  const clickTimeoutRef = useRef(null);
-  const clickCountRef = useRef(0);
+  
+  // Refs para pánico manos libres físico
+  const lastHeadsetClickTimeRef = useRef(0);
+  const headsetClickCountRef = useRef(0);
+  const headsetClickTimeoutRef = useRef(null);
+
+  // Refs para pánico táctil (HUD en pantalla)
+  const lastHUDPressTimeRef = useRef(0);
+  const hudClickCountRef = useRef(0);
+  
+  // Ref para descarte de audios ultra-cortos
+  const recordingStartTimeRef = useRef(0);
+  const shouldDiscardRecordingRef = useRef(false);
+
   const silentAudioRef = useRef(null);
-  const silentAudioCtxRef = useRef(null);
+  const [isSintonizado, setIsSintonizado] = useState(false);
+  
+  // Shake to SOS (Sacudir para pánico)
+  const [shakeEnabled, setShakeEnabled] = useState(localStorage.getItem('mfx_shake_enabled') === 'true');
+  const shakeEnabledRef = useRef(localStorage.getItem('mfx_shake_enabled') === 'true');
+
+  // Control de saturación (throttle) para SOS
+  const lastSOSSentRef = useRef(0);
   
   // Ref para controlar el estado actual dentro de los event listeners del teclado
   const isRecordingRef = useRef(false);
@@ -41,12 +60,109 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
   }, [pendingTexts]);
 
   useEffect(() => {
+    shakeEnabledRef.current = shakeEnabled;
+    localStorage.setItem('mfx_shake_enabled', shakeEnabled);
+  }, [shakeEnabled]);
+
+  useEffect(() => {
     const fetchCount = async () => {
       const c = await getDailyMessageCount();
       setMsgCount(c);
     };
     fetchCount();
   }, []);
+
+  // Lógica para Manos Libres (MediaSession API y Teclas Multimedia) con Alerta SOS Antipánico
+  // Cualquier secuencia de 2 o más clics rápidos y seguidos activará de inmediato la alarma en el monitor
+  const handleHeadsetClick = (details) => {
+    console.log(`[MediaSession] Headset clicked, action: ${details?.action || 'unknown'}`);
+    const now = Date.now();
+    const timeSinceLastClick = now - lastHeadsetClickTimeRef.current;
+    lastHeadsetClickTimeRef.current = now;
+
+    clearTimeout(headsetClickTimeoutRef.current);
+
+    if (timeSinceLastClick < 600) {
+      // Es una secuencia rápida de clicks consecutivos
+      headsetClickCountRef.current += 1;
+    } else {
+      // Es el primer click después de un tiempo
+      headsetClickCountRef.current = 1;
+    }
+
+    if (headsetClickCountRef.current >= 2) {
+      // PÁNICO DETECTADO: 2 o más clics rápidos
+      console.log(`[SOS HEADSET] Pánico detectado: ${headsetClickCountRef.current} clics rápidos consecutivos. Activando SOS...`);
+      sendSOS();
+      
+      // Limpiamos contador tras un delay para absorber clicks adicionales de pánico
+      headsetClickTimeoutRef.current = setTimeout(() => {
+        headsetClickCountRef.current = 0;
+      }, 2000);
+    } else {
+      // Esperar un momento breve para confirmar si es un único click o el inicio de pánico
+      headsetClickTimeoutRef.current = setTimeout(() => {
+        if (headsetClickCountRef.current === 1) {
+          console.log("[SOS HEADSET] Un solo click validado. Alternando transmisión.");
+          if (isRecordingRef.current) {
+            handleMainButtonRelease();
+          } else {
+            handleMainButtonPress();
+          }
+        }
+        headsetClickCountRef.current = 0;
+      }, 400); // Ventana de 400ms para interceptar un segundo click
+    }
+  };
+
+  const sintonizarHeadset = () => {
+    try {
+      // Solicitar permiso de sensor de movimiento (Acelerómetro) para iOS si es necesario
+      if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
+        DeviceMotionEvent.requestPermission()
+          .then(permissionState => {
+            console.log("DeviceMotion permission:", permissionState);
+            if (permissionState === 'granted') {
+              // El listener ya se activa mediante shakeEnabledRef
+            }
+          })
+          .catch(err => console.warn("Error solicitando permisos del acelerómetro:", err));
+      }
+
+      // Crear y reproducir un bucle de audio silencioso real de 10s (public/silence.wav)
+      // Esto garantiza compatibilidad universal y mantiene activa la sesión multimedia en segundo plano
+      const audio = new Audio("/silence.wav");
+      audio.loop = true;
+      audio.volume = 0.05; // Volumen inaudible pero registrado como activo por el sistema operativo
+      
+      audio.play().then(() => {
+        console.log("🚀 Canal táctil enlazado. Bucle de silencio de 10s activo.");
+        if ('mediaSession' in navigator) {
+          navigator.mediaSession.metadata = new MediaMetadata({
+            title: 'MFX Walkie-Talkie',
+            artist: 'Canal ' + session.channel,
+          });
+          navigator.mediaSession.setActionHandler('play', handleHeadsetClick);
+          navigator.mediaSession.setActionHandler('pause', handleHeadsetClick);
+          navigator.mediaSession.setActionHandler('nexttrack', handleHeadsetClick);
+          navigator.mediaSession.setActionHandler('previoustrack', handleHeadsetClick);
+          navigator.mediaSession.playbackState = 'playing';
+        }
+        setIsSintonizado(true);
+        setStatusMsg("Sintonizado | Standby");
+      }).catch(err => {
+        console.warn("Error al sintonizar audio:", err);
+        // Si falla por autoplay, igual activamos la interfaz pero reportamos el estado
+        setIsSintonizado(true);
+        setStatusMsg("Standby");
+      });
+
+      silentAudioRef.current = audio;
+    } catch (e) {
+      console.error(e);
+      setIsSintonizado(true);
+    }
+  };
 
   useEffect(() => {
     let wakeLock = null;
@@ -61,75 +177,17 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
     };
     requestWakeLock();
 
-    // Crear un bucle de silencio infinito usando Web Audio API y MediaStream para garantizar que Chrome en Android/iOS
-    // considere que la sesión multimedia (MediaSession) está activamente "reproduciendo" un flujo continuo (duración > 5s).
-    // Esto es crucial para evitar que el sistema operativo secuestre los toques del manos libres para abrir Gemini/Siri.
-    let silentAudioCtx = null;
-    let silentAudio = null;
-
-    const startSilentLoop = () => {
-      try {
-        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-        if (!AudioContextClass) return;
-
-        silentAudioCtx = new AudioContextClass();
-        const destination = silentAudioCtx.createMediaStreamDestination();
-        
-        // Creamos un oscilador inaudible para obligar a que el flujo tenga datos constantes
-        const oscillator = silentAudioCtx.createOscillator();
-        const gainNode = silentAudioCtx.createGain();
-        gainNode.gain.value = 0.0001; // Volumen inaudible pero existente para el motor de audio
-        oscillator.connect(gainNode);
-        gainNode.connect(destination);
-        oscillator.start();
-
-        silentAudio = new Audio();
-        silentAudio.srcObject = destination.stream;
-        silentAudio.volume = 0.05;
-        
-        const playAudio = () => {
-          silentAudio.play().then(() => {
-            console.log("🚀 Bucle de silencio infinito iniciado exitosamente.");
-            if ('mediaSession' in navigator) {
-              navigator.mediaSession.playbackState = 'playing';
-            }
-          }).catch(err => {
-            console.warn("⚠️ Autoplay del bucle de silencio bloqueado por el navegador. Se activará al primer toque en la pantalla:", err);
-          });
-        };
-
-        playAudio();
-
-        // En caso de que el navegador bloquee el autoplay inicial, lo activamos ante cualquier interacción táctil
-        const enableOnInteraction = () => {
-          if (silentAudioCtx && silentAudioCtx.state === 'suspended') {
-            silentAudioCtx.resume();
-          }
-          if (silentAudio) {
-            playAudio();
-          }
-          window.removeEventListener('click', enableOnInteraction);
-          window.removeEventListener('touchstart', enableOnInteraction);
-        };
-        window.addEventListener('click', enableOnInteraction);
-        window.addEventListener('touchstart', enableOnInteraction);
-
-        silentAudioRef.current = silentAudio;
-        silentAudioCtxRef.current = silentAudioCtx;
-      } catch (err) {
-        console.error("Error al iniciar bucle de silencio infinito:", err);
-      }
-    };
-
-    startSilentLoop();
-
     const newSocket = io(SOCKET_SERVER_URL, {
       transports: ['websocket']
     });
     setSocket(newSocket);
 
     newSocket.on('connect', () => {
-      setStatusMsg("Conectado | Standby");
+      if (isSintonizado) {
+        setStatusMsg("Sintonizado | Standby");
+      } else {
+        setStatusMsg("Conectado | Standby");
+      }
       newSocket.emit('join_channel', session);
     });
 
@@ -202,43 +260,53 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
 
-    // Lógica para Manos Libres (MediaSession API y Teclas Multimedia)
-    const handleHeadsetClick = () => {
-      clickCountRef.current += 1;
-      if (clickCountRef.current === 1) {
-        clickTimeoutRef.current = setTimeout(() => {
-          // Single click
-          if (isRecordingRef.current) {
-            handleMainButtonRelease();
-          } else {
-            handleMainButtonPress();
-          }
-          clickCountRef.current = 0;
-        }, 400); // 400ms para esperar un posible doble clic
-      } else if (clickCountRef.current === 2) {
-        // Double click
-        clearTimeout(clickTimeoutRef.current);
-        sendSOS();
-        clickCountRef.current = 0;
-      }
-    };
-
-    if ('mediaSession' in navigator) {
-      navigator.mediaSession.metadata = new MediaMetadata({
-        title: 'MFX Walkie-Talkie',
-        artist: 'Canal ' + session.channel,
-      });
-      navigator.mediaSession.setActionHandler('play', handleHeadsetClick);
-      navigator.mediaSession.setActionHandler('pause', handleHeadsetClick);
-    }
-
     const handleMediaKeys = (e) => {
       if (e.key === 'MediaPlayPause') {
         e.preventDefault();
-        handleHeadsetClick();
+        handleHeadsetClick({ action: 'playpause' });
       }
     };
     window.addEventListener('keydown', handleMediaKeys);
+
+    // Detección de sacudida (Shake-to-SOS)
+    let shakeCount = 0;
+    let lastShakeTime = 0;
+    
+    const handleMotion = (event) => {
+      if (!shakeEnabledRef.current) return;
+      
+      const acc = event.acceleration;
+      if (!acc || acc.x === null) return;
+      
+      // Calcular fuerza total g (sin gravedad)
+      const force = Math.sqrt(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
+      
+      // 24 m/s² es una sacudida brusca (aprox 2.4g)
+      if (force > 24) {
+        const now = Date.now();
+        // Evitar contar lecturas consecutivas del mismo movimiento (debounce de 350ms)
+        if (now - lastShakeTime > 350) {
+          shakeCount += 1;
+          lastShakeTime = now;
+          console.log(`[SHAKE] Movimiento detectado. Contador: ${shakeCount}/3`);
+          
+          if (shakeCount >= 3) {
+            console.log("[SHAKE SOS] Sacudida exitosa. ¡Activando SOS!");
+            sendSOS();
+            shakeCount = 0;
+          }
+          
+          // Si pasa más de 3 segundos sin sacudidas, resetear contador
+          setTimeout(() => {
+            if (Date.now() - lastShakeTime > 3000) {
+              shakeCount = 0;
+            }
+          }, 3200);
+        }
+      }
+    };
+
+    window.addEventListener('devicemotion', handleMotion);
 
     return () => {
       if (wakeLock) wakeLock.release();
@@ -246,21 +314,19 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('keydown', handleMediaKeys);
+      window.removeEventListener('devicemotion', handleMotion);
       if ('mediaSession' in navigator) {
         navigator.mediaSession.setActionHandler('play', null);
         navigator.mediaSession.setActionHandler('pause', null);
+        navigator.mediaSession.setActionHandler('nexttrack', null);
+        navigator.mediaSession.setActionHandler('previoustrack', null);
       }
       if (silentAudioRef.current) {
         silentAudioRef.current.pause();
-        silentAudioRef.current.srcObject = null;
         silentAudioRef.current = null;
       }
-      if (silentAudioCtxRef.current) {
-        silentAudioCtxRef.current.close();
-        silentAudioCtxRef.current = null;
-      }
     };
-  }, [session]);
+  }, [session, isSintonizado]);
 
   const readPendingTexts = () => {
     if (pendingTextsRef.current.length === 0) return;
@@ -332,6 +398,30 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
     if (sosActive) return; // Si hay SOS, debe reconocerlo primero
     if (window.speechSynthesis.speaking) return; // Evitar pisar la lectura
     
+    const now = Date.now();
+    const timeSinceLastHUD = now - lastHUDPressTimeRef.current;
+    lastHUDPressTimeRef.current = now;
+
+    if (timeSinceLastHUD < 500) {
+      // Pulsación rápida secuencial en el HUD
+      hudClickCountRef.current += 1;
+    } else {
+      // Primera pulsación
+      hudClickCountRef.current = 1;
+    }
+
+    if (hudClickCountRef.current >= 2) {
+      // PÁNICO TÁCTIL DETECTADO
+      console.log(`[SOS HUD] Pánico táctil en pantalla: ${hudClickCountRef.current} toques rápidos.`);
+      sendSOS();
+      
+      // Si el primer toque inició una grabación, la cancelamos y descartamos de inmediato
+      if (isRecordingRef.current) {
+        discardRecording();
+      }
+      return;
+    }
+
     if (pendingTextsRef.current.length > 0) {
       // Prioridad 1: Leer Textos Pendientes
       readPendingTexts();
@@ -360,12 +450,21 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
       const mediaRecorder = new MediaRecorder(stream);
       mediaRecorderRef.current = mediaRecorder;
       audioChunksRef.current = [];
+      recordingStartTimeRef.current = Date.now();
+      shouldDiscardRecordingRef.current = false;
 
       mediaRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) audioChunksRef.current.push(event.data);
       };
 
       mediaRecorder.onstop = () => {
+        if (shouldDiscardRecordingRef.current) {
+          console.log("Grabación descartada.");
+          stream.getTracks().forEach(track => track.stop());
+          shouldDiscardRecordingRef.current = false;
+          return;
+        }
+
         const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
         if (socket && socket.connected) {
            socket.emit('audio_message', { audioBlob });
@@ -388,6 +487,16 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
 
   const stopRecording = async () => {
     if (mediaRecorderRef.current && isRecordingRef.current) {
+      const duration = Date.now() - recordingStartTimeRef.current;
+      if (duration < 400) {
+        // Clic accidental o pánico
+        shouldDiscardRecordingRef.current = true;
+        mediaRecorderRef.current.stop();
+        setIsRecording(false);
+        setStatusMsg("Standby");
+        return;
+      }
+
       mediaRecorderRef.current.stop();
       setIsRecording(false);
       setStatusMsg("Enviado. Standby");
@@ -403,10 +512,38 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
     }
   };
 
+  const discardRecording = () => {
+    if (mediaRecorderRef.current && isRecordingRef.current) {
+      shouldDiscardRecordingRef.current = true;
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      setStatusMsg("Llamada cancelada");
+      setTimeout(() => {
+        if (!isReceiving && !sosActive && pendingTexts.length === 0) setStatusMsg("Standby");
+      }, 1500);
+    }
+  };
+
   const sendSOS = () => {
-      socket.emit('sos_alert');
-      setStatusMsg("SOS Enviado");
-      setTimeout(() => setStatusMsg("Standby"), 3000);
+      const now = Date.now();
+      if (now - lastSOSSentRef.current < 5000) {
+        console.log("[SOS] SOS omitido por límite de frecuencia.");
+        return;
+      }
+      lastSOSSentRef.current = now;
+
+      if (socket && socket.connected) {
+         socket.emit('sos_alert');
+      }
+      
+      setStatusMsg("🚨 SOS ENVIADO 🚨");
+      if (navigator.vibrate) {
+        navigator.vibrate([100, 50, 100, 50, 100]);
+      }
+      
+      setTimeout(() => {
+        if (!sosActive) setStatusMsg("Standby");
+      }, 3000);
   };
 
   const acknowledgeSOS = () => {
@@ -422,6 +559,38 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
     const audio = new Audio(url);
     audio.play();
   };
+
+  if (!isSintonizado) {
+    return (
+      <div className="flex-center flex-column" style={{ minHeight: '100vh', padding: '20px', textAlign: 'center', background: 'radial-gradient(circle, rgba(16,20,30,1) 0%, rgba(5,6,10,1) 100%)' }}>
+        <div className="glass-panel" style={{ padding: '40px 30px', maxWidth: '400px', width: '100%', border: '1px solid var(--neon-cyan)', boxShadow: '0 0 25px rgba(0, 240, 255, 0.25)', borderRadius: '12px' }}>
+          <Radio className="text-neon-cyan" size={48} style={{ marginBottom: '20px', display: 'inline-block' }} />
+          <h2 style={{ color: '#fff', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '1px' }}>Sintonización Segura</h2>
+          <p className="text-secondary" style={{ fontSize: '14px', lineHeight: '1.6', marginBottom: '30px' }}>
+            Para enlazar tu manos libres físico y garantizar la transmisión de voz/alarmas, y habilitar la detección de pánico por sacudida (Shake-to-SOS), presiona el botón a continuación.
+          </p>
+          <button 
+            onClick={sintonizarHeadset} 
+            className="btn-primary" 
+            style={{ 
+              width: '100%', 
+              padding: '16px', 
+              fontSize: '16px', 
+              fontWeight: 'bold', 
+              background: 'linear-gradient(135deg, var(--neon-cyan) 0%, #0099ff 100%)', 
+              boxShadow: '0 0 15px var(--neon-cyan)',
+              cursor: 'pointer',
+              border: 'none',
+              borderRadius: '8px',
+              color: '#000'
+            }}
+          >
+            ACTIVAR MODO TÁCTICO
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex-column" style={{ minHeight: '100vh', padding: '20px', justifyContent: 'space-between', backgroundColor: sosActive ? 'rgba(255, 0, 0, 0.2)' : 'transparent', transition: 'background-color 0.5s' }}>
@@ -470,11 +639,52 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
           </button>
         )}
         
-        <p className="text-secondary" style={{ marginTop: '30px', textAlign: 'center', fontSize: '14px', maxWidth: '300px' }}>
+        {/* Panel de Configuración Táctica / Shake to SOS */}
+        <div className="glass-panel" style={{ marginTop: '25px', padding: '12px 18px', maxWidth: '300px', width: '100%', border: '1px solid var(--border-glass)', display: 'flex', flexDirection: 'column', gap: '8px', textAlign: 'left' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: '13px', color: '#fff', display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 'bold' }}>
+              <AlertTriangle size={14} style={{ color: 'var(--neon-cyan)' }} />
+              Sacudir para SOS
+            </span>
+            <div 
+              onClick={() => setShakeEnabled(!shakeEnabled)}
+              style={{
+                width: '44px',
+                height: '24px',
+                borderRadius: '12px',
+                background: shakeEnabled ? 'rgba(0, 240, 255, 0.3)' : 'rgba(255, 255, 255, 0.1)',
+                border: `1px solid ${shakeEnabled ? 'var(--neon-cyan)' : 'var(--border-glass)'}`,
+                position: 'relative',
+                cursor: 'pointer',
+                transition: 'all 0.3s ease',
+                boxShadow: shakeEnabled ? '0 0 10px rgba(0, 240, 255, 0.4)' : 'none'
+              }}
+            >
+              <div style={{
+                width: '16px',
+                height: '16px',
+                borderRadius: '50%',
+                background: shakeEnabled ? 'var(--neon-cyan)' : 'var(--text-secondary)',
+                position: 'absolute',
+                top: '3px',
+                left: shakeEnabled ? '23px' : '3px',
+                transition: 'all 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55)',
+                boxShadow: shakeEnabled ? '0 0 5px #fff' : 'none'
+              }} />
+            </div>
+          </div>
+          <small className="text-secondary" style={{ fontSize: '11px', lineHeight: '1.3' }}>
+            {shakeEnabled 
+              ? "✓ Activo. Sacude el celular fuertemente 3 veces seguidas para disparar la alarma." 
+              : "Desactivado. Útil si vas a correr o hacer movimientos bruscos."}
+          </small>
+        </div>
+
+        <p className="text-secondary" style={{ marginTop: '25px', textAlign: 'center', fontSize: '13px', maxWidth: '300px', lineHeight: '1.5' }}>
           MANTENER PULSADO O USAR BARRA ESPACIADORA.<br/><br/>
-          <strong style={{color: 'var(--neon-cyan)'}}>MANOS LIBRES:</strong><br/>
-          1 Clic para Hablar (o Escuchar Texto)<br/>
-          2 Clics Rápidos para SOS
+          <strong style={{color: 'var(--neon-cyan)'}}>ACCESO DIRECTO DE PÁNICO (SOS):</strong><br/>
+          • 2+ Clics Rápidos en el Manos Libres Físico<br/>
+          • 2+ Clics Rápidos en el Micrófono Táctil
         </p>
       </main>
 
