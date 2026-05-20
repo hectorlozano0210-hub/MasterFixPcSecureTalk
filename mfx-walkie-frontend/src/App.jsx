@@ -23,6 +23,7 @@ function App() {
   const [channel, setChannel] = useState('');
   const [password, setPassword] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [isConnecting, setIsConnecting] = useState(false);
   
   useEffect(() => {
     // Load license on mount
@@ -65,11 +66,30 @@ function App() {
     if (!username.trim() || !channel.trim()) return;
 
     localStorage.setItem('mfx_username', username);
+    setIsConnecting(true);
 
-    const socket = io(SOCKET_SERVER_URL);
+    const socket = io(SOCKET_SERVER_URL, {
+      timeout: 5000,
+      reconnection: false
+    });
+
+    const timeoutId = setTimeout(() => {
+      setErrorMsg(`Límite de tiempo de conexión excedido para el servidor en ${SOCKET_SERVER_URL}. El servidor podría estar en "cold start" (dormido) en Render, apagado, o el URL de socket no estar inyectado correctamente en el Frontend.`);
+      setIsConnecting(false);
+      socket.disconnect();
+    }, 5000);
+
+    socket.on('connect_error', (err) => {
+      clearTimeout(timeoutId);
+      setErrorMsg(`Error de conexión con el servidor en ${SOCKET_SERVER_URL}: ${err.message}. Asegúrate de que la variable de entorno VITE_SOCKET_SERVER_URL en Render sea la correcta.`);
+      setIsConnecting(false);
+      socket.disconnect();
+    });
 
     if (mode === 'create') {
       socket.emit('create_channel', { channel, password }, (res) => {
+        clearTimeout(timeoutId);
+        setIsConnecting(false);
         if (res.success) {
           socket.disconnect(); 
           setSession({ role, username, channel, password, avatar, license: licenseInfo });
@@ -80,6 +100,8 @@ function App() {
       });
     } else {
       socket.emit('join_channel', { role, channel, username, password, avatar }, (res) => {
+        clearTimeout(timeoutId);
+        setIsConnecting(false);
         if (res.success) {
           socket.disconnect();
           setSession({ role, username, channel, password, avatar, license: licenseInfo });
@@ -264,8 +286,8 @@ function App() {
 
           {errorMsg && <p style={{ color: 'var(--neon-red)', fontSize: '14px', margin: '5px 0' }}>{errorMsg}</p>}
 
-          <button type="submit" className="btn-primary" style={{ marginTop: '10px' }}>
-            {mode === 'create' ? 'CREAR Y CONECTAR' : 'CONECTAR'}
+          <button type="submit" className="btn-primary" style={{ marginTop: '10px' }} disabled={isConnecting}>
+            {isConnecting ? 'CONECTANDO...' : (mode === 'create' ? 'CREAR Y CONECTAR' : 'CONECTAR')}
           </button>
         </form>
       </div>

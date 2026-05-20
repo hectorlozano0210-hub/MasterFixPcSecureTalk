@@ -35,6 +35,17 @@ export default function MonitorView({ session, onLogout, onUpgrade }) {
       newSocket.emit('join_channel', session);
     });
 
+    newSocket.on('connect_error', (err) => {
+      console.error("Socket connection error in MonitorView:", err);
+      setLogs(prev => [{
+        id: Date.now(),
+        sender: 'SISTEMA',
+        role: 'system',
+        time: new Date().toLocaleTimeString(),
+        message: `¡ERROR DE CONEXIÓN! Reintentando conectar al servidor...`
+      }, ...prev].slice(0, 50));
+    });
+
     newSocket.on('audio_broadcast', (data) => {
       const blob = new Blob([data.audioBlob], { type: 'audio/webm' });
       const audioUrl = URL.createObjectURL(blob);

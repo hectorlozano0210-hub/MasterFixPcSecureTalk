@@ -67,6 +67,11 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
       newSocket.emit('join_channel', session);
     });
 
+    newSocket.on('connect_error', (err) => {
+      setStatusMsg("Error de Red | Intentando reconectar...");
+      console.error("Socket connection error in GuardView:", err);
+    });
+
     newSocket.on('audio_broadcast', async (data) => {
       setIsReceiving(true);
       setStatusMsg(`Recibiendo de: ${data.sender}`);
