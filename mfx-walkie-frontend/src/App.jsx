@@ -5,6 +5,7 @@ import SplashScreen from './components/SplashScreen';
 import { ShieldAlert, MonitorCheck, ImagePlus, UserCircle2, Key } from 'lucide-react';
 import { io } from 'socket.io-client';
 import { getLocalData, setLocalData } from './utils/db';
+import { safeStorage } from './utils/storage';
 
 const SOCKET_SERVER_URL = import.meta.env.VITE_SOCKET_SERVER_URL || "http://localhost:3001";
 
@@ -16,8 +17,8 @@ function App() {
   
   // Login State
   const [role, setRole] = useState('guard');
-  const [username, setUsername] = useState(localStorage.getItem('mfx_username') || '');
-  const [avatar, setAvatar] = useState(localStorage.getItem('mfx_avatar') || '');
+  const [username, setUsername] = useState(safeStorage.getItem('mfx_username') || '');
+  const [avatar, setAvatar] = useState(safeStorage.getItem('mfx_avatar') || '');
   
   const [mode, setMode] = useState('join'); // 'join' or 'create'
   const [channel, setChannel] = useState('');
@@ -33,15 +34,19 @@ function App() {
     };
     loadLicense();
 
-    // Restaurar sesión guardada de localStorage si existe
-    const savedSession = localStorage.getItem('mfx_session');
-    if (savedSession) {
-      try {
+    // Restaurar sesión guardada de safeStorage si existe y es válida
+    try {
+      const savedSession = safeStorage.getItem('mfx_session');
+      if (savedSession) {
         const parsed = JSON.parse(savedSession);
-        setSession(parsed);
-      } catch (e) {
-        console.error("Error al restaurar sesión guardada:", e);
+        if (parsed && typeof parsed === 'object' && parsed.role) {
+          setSession(parsed);
+        } else {
+          safeStorage.removeItem('mfx_session');
+        }
       }
+    } catch (e) {
+      console.error("Error al restaurar sesión guardada:", e);
     }
   }, []);
 
@@ -64,7 +69,7 @@ function App() {
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
         const dataUrl = canvas.toDataURL('image/jpeg', 0.6); // Compress to 60%
         setAvatar(dataUrl);
-        localStorage.setItem('mfx_avatar', dataUrl);
+        safeStorage.setItem('mfx_avatar', dataUrl);
       };
       img.src = event.target.result;
     };
@@ -76,7 +81,7 @@ function App() {
     setErrorMsg('');
     if (!username.trim() || !channel.trim()) return;
 
-    localStorage.setItem('mfx_username', username);
+    safeStorage.setItem('mfx_username', username);
     setIsConnecting(true);
 
     const socket = io(SOCKET_SERVER_URL, {
@@ -105,7 +110,7 @@ function App() {
         if (res.success) {
           socket.disconnect(); 
           const newSession = { role, username, channel, password, avatar, license: licenseInfo };
-          localStorage.setItem('mfx_session', JSON.stringify(newSession));
+          safeStorage.setItem('mfx_session', JSON.stringify(newSession));
           setSession(newSession);
         } else {
           setErrorMsg(res.message);
@@ -119,7 +124,7 @@ function App() {
         if (res.success) {
           socket.disconnect();
           const newSession = { role, username, channel, password, avatar, license: licenseInfo };
-          localStorage.setItem('mfx_session', JSON.stringify(newSession));
+          safeStorage.setItem('mfx_session', JSON.stringify(newSession));
           setSession(newSession);
         } else {
           setErrorMsg(res.message);
@@ -130,7 +135,7 @@ function App() {
   };
 
   const handleLogout = () => {
-    localStorage.removeItem('mfx_session');
+    safeStorage.removeItem('mfx_session');
     setSession(null);
   };
 

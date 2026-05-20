@@ -3,6 +3,7 @@ import { io } from 'socket.io-client';
 import { Mic, Volume2, LogOut, Radio, AlertTriangle, Play, UserCircle2, CheckCircle, MessageSquare, AlertCircle } from 'lucide-react';
 import { startSOSAlarm, playRogerBeep, playTextPing } from '../utils/audio';
 import { updateDailyMessageCount, getDailyMessageCount } from '../utils/db';
+import { safeStorage } from '../utils/storage';
 
 const SOCKET_SERVER_URL = import.meta.env.VITE_SOCKET_SERVER_URL || "http://localhost:3001"; // En prod, cambiar a variable de entorno
 
@@ -50,8 +51,8 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
   const [isSintonizado, setIsSintonizado] = useState(false);
   
   // Shake to SOS (Sacudir para pánico)
-  const [shakeEnabled, setShakeEnabled] = useState(localStorage.getItem('mfx_shake_enabled') === 'true');
-  const shakeEnabledRef = useRef(localStorage.getItem('mfx_shake_enabled') === 'true');
+  const [shakeEnabled, setShakeEnabled] = useState(safeStorage.getItem('mfx_shake_enabled') === 'true');
+  const shakeEnabledRef = useRef(safeStorage.getItem('mfx_shake_enabled') === 'true');
 
   // Control de saturación (throttle) para SOS
   const lastSOSSentRef = useRef(0);
@@ -69,7 +70,7 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
 
   useEffect(() => {
     shakeEnabledRef.current = shakeEnabled;
-    localStorage.setItem('mfx_shake_enabled', shakeEnabled);
+    safeStorage.setItem('mfx_shake_enabled', shakeEnabled);
   }, [shakeEnabled]);
 
   // Mantener las referencias a los controladores siempre actualizadas en cada render
