@@ -93,7 +93,7 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
   const handleHeadsetClick = (details) => {
     console.log(`[MediaSession] Headset clicked, action: ${details?.action || 'unknown'}`);
     
-    // Forzar que el audio silencioso siga reproduciéndose para que el sistema operativo no dismissed la sesión multimedia
+    // Forzar que el audio silencioso siga reproduciéndose para que el sistema operativo no descarte la sesión multimedia
     if (silentAudioRef.current) {
       silentAudioRef.current.play().then(() => {
         if ('mediaSession' in navigator) {
@@ -106,38 +106,28 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
     const timeSinceLastClick = now - lastHeadsetClickTimeRef.current;
     lastHeadsetClickTimeRef.current = now;
 
-    clearTimeout(headsetClickTimeoutRef.current);
-
-    if (timeSinceLastClick < 600) {
-      // Es una secuencia rápida de clicks consecutivos
-      headsetClickCountRef.current += 1;
-    } else {
-      // Es el primer click después de un tiempo
-      headsetClickCountRef.current = 1;
-    }
-
-    if (headsetClickCountRef.current >= 2) {
-      // PÁNICO DETECTADO: 2 o más clics rápidos
-      console.log(`[SOS HEADSET] Pánico detectado: ${headsetClickCountRef.current} clics rápidos consecutivos. Activando SOS...`);
-      if (sendSOSRef.current) sendSOSRef.current();
-      
-      // Limpiamos contador tras un delay para absorber clicks adicionales de pánico
-      headsetClickTimeoutRef.current = setTimeout(() => {
-        headsetClickCountRef.current = 0;
-      }, 2000);
-    } else {
-      // Esperar un momento breve para confirmar si es un único click o el inicio de pánico
-      headsetClickTimeoutRef.current = setTimeout(() => {
-        if (headsetClickCountRef.current === 1) {
-          console.log("[SOS HEADSET] Un solo click validado. Alternando transmisión.");
-          if (isRecordingRef.current) {
-            if (handleMainButtonReleaseRef.current) handleMainButtonReleaseRef.current();
-          } else {
-            if (handleMainButtonPressRef.current) handleMainButtonPressRef.current();
-          }
+    if (isRecordingRef.current) {
+      // Si ya está transmitiendo, revisamos si el clic es un doble clic rápido de pánico
+      if (timeSinceLastClick < 600) {
+        console.log(`[SOS HEADSET] Clic rápido detectado en transmisión (${timeSinceLastClick}ms). Activando SOS.`);
+        // Detener y descartar la grabación inmediatamente
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+          shouldDiscardRecordingRef.current = true;
+          mediaRecorderRef.current.stop();
         }
-        headsetClickCountRef.current = 0;
-      }, 400); // Ventana de 400ms para interceptar un segundo click
+        setIsRecording(false);
+        setStatusMsg("Standby");
+        
+        // Enviar alerta SOS
+        if (sendSOSRef.current) sendSOSRef.current();
+      } else {
+        console.log(`[SOS HEADSET] Clic normal en transmisión (${timeSinceLastClick}ms). Deteniendo transmisión.`);
+        if (handleMainButtonReleaseRef.current) handleMainButtonReleaseRef.current();
+      }
+    } else {
+      // Si NO está transmitiendo, iniciamos la transmisión inmediatamente de forma síncrona
+      console.log("[SOS HEADSET] Clic detectado fuera de transmisión. Iniciando PTT síncronamente (preservando User Gesture).");
+      if (handleMainButtonPressRef.current) handleMainButtonPressRef.current();
     }
   };
 

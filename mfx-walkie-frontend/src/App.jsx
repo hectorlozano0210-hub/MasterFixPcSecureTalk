@@ -32,6 +32,17 @@ function App() {
       if (data) setLicenseInfo(data);
     };
     loadLicense();
+
+    // Restaurar sesión guardada de localStorage si existe
+    const savedSession = localStorage.getItem('mfx_session');
+    if (savedSession) {
+      try {
+        const parsed = JSON.parse(savedSession);
+        setSession(parsed);
+      } catch (e) {
+        console.error("Error al restaurar sesión guardada:", e);
+      }
+    }
   }, []);
 
   // Handle Avatar Upload
@@ -93,7 +104,9 @@ function App() {
         setIsConnecting(false);
         if (res.success) {
           socket.disconnect(); 
-          setSession({ role, username, channel, password, avatar, license: licenseInfo });
+          const newSession = { role, username, channel, password, avatar, license: licenseInfo };
+          localStorage.setItem('mfx_session', JSON.stringify(newSession));
+          setSession(newSession);
         } else {
           setErrorMsg(res.message);
           socket.disconnect();
@@ -105,7 +118,9 @@ function App() {
         setIsConnecting(false);
         if (res.success) {
           socket.disconnect();
-          setSession({ role, username, channel, password, avatar, license: licenseInfo });
+          const newSession = { role, username, channel, password, avatar, license: licenseInfo };
+          localStorage.setItem('mfx_session', JSON.stringify(newSession));
+          setSession(newSession);
         } else {
           setErrorMsg(res.message);
           socket.disconnect();
@@ -115,6 +130,7 @@ function App() {
   };
 
   const handleLogout = () => {
+    localStorage.removeItem('mfx_session');
     setSession(null);
   };
 
