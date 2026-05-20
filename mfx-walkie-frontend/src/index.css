@@ -1,0 +1,150 @@
+:root {
+  --bg-dark: #0a0a0c;
+  --panel-bg: rgba(20, 20, 25, 0.7);
+  --neon-blue: #00f0ff;
+  --neon-cyan: #00ffcc;
+  --neon-red: #ff3366;
+  --neon-green: #39ff14;
+  --text-primary: #ffffff;
+  --text-secondary: #8a8a93;
+  --border-glass: rgba(255, 255, 255, 0.1);
+  --glass-blur: blur(16px);
+  font-family: 'Inter', system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+  color-scheme: dark;
+  color: var(--text-primary);
+  background-color: var(--bg-dark);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background-color: var(--bg-dark);
+  background-image: 
+    radial-gradient(circle at 50% 0%, rgba(0, 240, 255, 0.1) 0%, transparent 50%),
+    radial-gradient(circle at 50% 100%, rgba(0, 255, 204, 0.05) 0%, transparent 50%);
+  background-attachment: fixed;
+}
+
+.glass-panel {
+  background: var(--panel-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--border-glass);
+  border-radius: 16px;
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+}
+
+.hud-button {
+  background: transparent;
+  border: 2px solid var(--neon-blue);
+  color: var(--neon-blue);
+  border-radius: 50%;
+  width: 150px;
+  height: 150px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  box-shadow: 0 0 15px rgba(0, 240, 255, 0.3), inset 0 0 15px rgba(0, 240, 255, 0.1);
+  outline: none;
+}
+
+.hud-button:active, .hud-button.active {
+  background: rgba(0, 240, 255, 0.2);
+  box-shadow: 0 0 30px rgba(0, 240, 255, 0.6), inset 0 0 30px rgba(0, 240, 255, 0.4);
+  transform: scale(0.95);
+}
+
+.hud-button.recording {
+  border-color: var(--neon-red);
+  color: var(--neon-red);
+  box-shadow: 0 0 30px rgba(255, 51, 102, 0.6), inset 0 0 30px rgba(255, 51, 102, 0.4);
+  animation: pulse-red 1.5s infinite;
+}
+
+.hud-button.receiving {
+  border-color: var(--neon-green);
+  color: var(--neon-green);
+  box-shadow: 0 0 30px rgba(57, 255, 20, 0.6), inset 0 0 30px rgba(57, 255, 20, 0.4);
+  animation: pulse-green 1.5s infinite;
+}
+
+@keyframes pulse-red {
+  0% { box-shadow: 0 0 15px rgba(255, 51, 102, 0.4); }
+  50% { box-shadow: 0 0 40px rgba(255, 51, 102, 0.8); }
+  100% { box-shadow: 0 0 15px rgba(255, 51, 102, 0.4); }
+}
+
+@keyframes pulse-green {
+  0% { box-shadow: 0 0 15px rgba(57, 255, 20, 0.4); }
+  50% { box-shadow: 0 0 40px rgba(57, 255, 20, 0.8); }
+  100% { box-shadow: 0 0 15px rgba(57, 255, 20, 0.4); }
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, rgba(0, 240, 255, 0.8), rgba(0, 255, 204, 0.8));
+  color: #000;
+  border: none;
+  padding: 12px 24px;
+  border-radius: 8px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 15px rgba(0, 240, 255, 0.4);
+}
+
+.input-glass {
+  background: rgba(0, 0, 0, 0.5);
+  border: 1px solid var(--border-glass);
+  color: white;
+  padding: 12px 16px;
+  border-radius: 8px;
+  width: 100%;
+  transition: all 0.3s ease;
+  outline: none;
+}
+
+.input-glass:focus {
+  border-color: var(--neon-blue);
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.2);
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 20px;
+}
+
+.status-indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.status-online { background-color: var(--neon-green); box-shadow: 0 0 8px var(--neon-green); }
+.status-offline { background-color: var(--text-secondary); }
+.status-busy { background-color: var(--neon-red); box-shadow: 0 0 8px var(--neon-red); }
+
+/* Utility Classes */
+.text-neon-blue { color: var(--neon-blue); }
+.text-neon-cyan { color: var(--neon-cyan); }
+.text-neon-red { color: var(--neon-red); }
+.text-secondary { color: var(--text-secondary); }
+.flex-center { display: flex; align-items: center; justify-content: center; }
+.flex-column { display: flex; flex-direction: column; }
