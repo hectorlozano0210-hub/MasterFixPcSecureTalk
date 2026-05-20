@@ -26,6 +26,7 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
   const alarmRef = useRef(null);
   const clickTimeoutRef = useRef(null);
   const clickCountRef = useRef(0);
+  const silentAudioRef = useRef(null);
   
   // Ref para controlar el estado actual dentro de los event listeners del teclado
   const isRecordingRef = useRef(false);
@@ -58,6 +59,21 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
       }
     };
     requestWakeLock();
+
+    // Crear y reproducir un bucle de audio silencioso para mantener activa la sesión multimedia (MediaSession)
+    // Esto es crucial para que Android/iOS no desvíe el clic del manos libres a Gemini/Siri o música externa
+    const silentAudio = new Audio("data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA");
+    silentAudio.loop = true;
+    silentAudio.volume = 0.05; // Bajo volumen para mantener activa la sesión sin molestar
+    
+    const playSilentAudio = () => {
+      silentAudio.play().catch(err => {
+        console.warn("Silent audio play blocked or failed:", err);
+      });
+    };
+    
+    playSilentAudio();
+    silentAudioRef.current = silentAudio;
 
     const newSocket = io(SOCKET_SERVER_URL, {
       transports: ['websocket']
@@ -185,6 +201,10 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
       if ('mediaSession' in navigator) {
         navigator.mediaSession.setActionHandler('play', null);
         navigator.mediaSession.setActionHandler('pause', null);
+      }
+      if (silentAudioRef.current) {
+        silentAudioRef.current.pause();
+        silentAudioRef.current = null;
       }
     };
   }, [session]);
