@@ -92,6 +92,16 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
   // Cualquier secuencia de 2 o más clics rápidos y seguidos activará de inmediato la alarma en el monitor
   const handleHeadsetClick = (details) => {
     console.log(`[MediaSession] Headset clicked, action: ${details?.action || 'unknown'}`);
+    
+    // Forzar que el audio silencioso siga reproduciéndose para que el sistema operativo no dismissed la sesión multimedia
+    if (silentAudioRef.current) {
+      silentAudioRef.current.play().then(() => {
+        if ('mediaSession' in navigator) {
+          navigator.mediaSession.playbackState = 'playing';
+        }
+      }).catch(err => console.warn("[MediaSession] Error re-activando audio silencioso al clickear:", err));
+    }
+
     const now = Date.now();
     const timeSinceLastClick = now - lastHeadsetClickTimeRef.current;
     lastHeadsetClickTimeRef.current = now;
@@ -147,12 +157,16 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
 
       // Crear y reproducir un bucle de audio silencioso real de 10s (public/silence.wav)
       // Esto garantiza compatibilidad universal y mantiene activa la sesión multimedia en segundo plano
-      const audio = new Audio("/silence.wav");
+      const audio = new Audio();
+      audio.src = "/silence.wav";
+      audio.preload = "auto";
       audio.loop = true;
-      audio.volume = 0.05; // Volumen inaudible pero registrado como activo por el sistema operativo
+      audio.volume = 0.02; // Suficientemente bajo para ser inaudible pero registrado como activo por el OS
       
       audio.play().then(() => {
         console.log("🚀 Canal táctil enlazado. Bucle de silencio de 10s activo.");
+        playRogerBeep(); // Pitido corto premium de confirmación de sintonización
+        
         if ('mediaSession' in navigator) {
           navigator.mediaSession.metadata = new MediaMetadata({
             title: 'MFX Walkie-Talkie',
@@ -168,6 +182,8 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
 
           navigator.mediaSession.setActionHandler('play', mediaSessionWrapper);
           navigator.mediaSession.setActionHandler('pause', mediaSessionWrapper);
+          navigator.mediaSession.setActionHandler('toggleplay', mediaSessionWrapper);
+          navigator.mediaSession.setActionHandler('stop', mediaSessionWrapper);
           navigator.mediaSession.setActionHandler('nexttrack', mediaSessionWrapper);
           navigator.mediaSession.setActionHandler('previoustrack', mediaSessionWrapper);
           navigator.mediaSession.playbackState = 'playing';
@@ -344,6 +360,8 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
       if ('mediaSession' in navigator) {
         navigator.mediaSession.setActionHandler('play', null);
         navigator.mediaSession.setActionHandler('pause', null);
+        navigator.mediaSession.setActionHandler('toggleplay', null);
+        navigator.mediaSession.setActionHandler('stop', null);
         navigator.mediaSession.setActionHandler('nexttrack', null);
         navigator.mediaSession.setActionHandler('previoustrack', null);
       }
@@ -532,6 +550,15 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
       setStatusMsg("Transmitiendo...");
       if (navigator.vibrate) navigator.vibrate(50);
       
+      // RE-ENFORZAR foco de la sesión de medios y reproducción de silencio al iniciar la grabación
+      if (silentAudioRef.current) {
+        silentAudioRef.current.play().then(() => {
+          if ('mediaSession' in navigator) {
+            navigator.mediaSession.playbackState = 'playing';
+          }
+        }).catch(err => console.warn("[MediaSession] Error re-enforcing focus during recording:", err));
+      }
+      
     } catch (err) {
       console.error("Error al acceder al micrófono:", err);
       setStatusMsg("Error de Micrófono");
@@ -559,6 +586,16 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
       setMsgCount(newCount);
 
       if (navigator.vibrate) navigator.vibrate([50, 50, 50]);
+      
+      // RE-ENFORZAR foco de la sesión de medios y reproducción de silencio tras detener la grabación
+      if (silentAudioRef.current) {
+        silentAudioRef.current.play().then(() => {
+          if ('mediaSession' in navigator) {
+            navigator.mediaSession.playbackState = 'playing';
+          }
+        }).catch(err => console.warn("[MediaSession] Error re-enforcing focus post recording:", err));
+      }
+
       setTimeout(() => {
         setStatusMsg(current => current.includes("Enviado") ? "Standby" : current);
       }, 2000);
