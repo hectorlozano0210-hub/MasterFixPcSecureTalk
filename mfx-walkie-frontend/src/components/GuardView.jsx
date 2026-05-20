@@ -59,7 +59,9 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
     };
     requestWakeLock();
 
-    const newSocket = io(SOCKET_SERVER_URL);
+    const newSocket = io(SOCKET_SERVER_URL, {
+      transports: ['websocket']
+    });
     setSocket(newSocket);
 
     newSocket.on('connect', () => {

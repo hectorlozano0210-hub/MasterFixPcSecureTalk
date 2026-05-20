@@ -28,7 +28,9 @@ export default function MonitorView({ session, onLogout, onUpgrade }) {
   }, [isRecording]);
 
   useEffect(() => {
-    const newSocket = io(SOCKET_SERVER_URL);
+    const newSocket = io(SOCKET_SERVER_URL, {
+      transports: ['websocket']
+    });
     setSocket(newSocket);
 
     newSocket.on('connect', () => {

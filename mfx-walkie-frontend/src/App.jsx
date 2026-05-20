@@ -69,15 +69,16 @@ function App() {
     setIsConnecting(true);
 
     const socket = io(SOCKET_SERVER_URL, {
-      timeout: 5000,
-      reconnection: false
+      timeout: 15000,
+      reconnection: false,
+      transports: ['websocket']
     });
 
     const timeoutId = setTimeout(() => {
-      setErrorMsg(`Límite de tiempo de conexión excedido para el servidor en ${SOCKET_SERVER_URL}. El servidor podría estar en "cold start" (dormido) en Render, apagado, o el URL de socket no estar inyectado correctamente en el Frontend.`);
+      setErrorMsg(`Límite de tiempo de conexión excedido para el servidor en ${SOCKET_SERVER_URL}. Si es la primera vez que entras en 15 minutos, el servidor gratuito de Render podría estar en "cold start" (dormido) y tardar hasta 50 segundos en despertar. Por favor, reintenta en unos instantes.`);
       setIsConnecting(false);
       socket.disconnect();
-    }, 5000);
+    }, 15000);
 
     socket.on('connect_error', (err) => {
       clearTimeout(timeoutId);
