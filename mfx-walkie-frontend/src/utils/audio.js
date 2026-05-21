@@ -71,6 +71,15 @@ export const playRogerBeep = () => {
   const now = ctx.currentTime;
   playTone(1200, now, 0.08);         // Primer pitido
   playTone(1500, now + 0.1, 0.08);   // Segundo pitido
+
+  // Cerrar el contexto de audio tras finalizar la reproducción (aproximadamente 300ms)
+  setTimeout(() => {
+    try {
+      ctx.close();
+    } catch (e) {
+      console.error("Error al cerrar AudioContext en playRogerBeep:", e);
+    }
+  }, 500);
 };
 
 export const playTextPing = () => {
@@ -94,5 +103,14 @@ export const playTextPing = () => {
   
   osc.start();
   osc.stop(ctx.currentTime + 0.2);
+
+  // Cerrar el contexto de audio tras finalizar la reproducción
+  setTimeout(() => {
+    try {
+      ctx.close();
+    } catch (e) {
+      console.error("Error al cerrar AudioContext en playTextPing:", e);
+    }
+  }, 500);
 };
 

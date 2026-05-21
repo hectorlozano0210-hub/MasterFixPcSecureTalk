@@ -49,6 +49,7 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
 
   const silentAudioRef = useRef(null);
   const [isSintonizado, setIsSintonizado] = useState(false);
+  const isSintonizadoRef = useRef(false);
   
   // Shake to SOS (Sacudir para pánico)
   const [shakeEnabled, setShakeEnabled] = useState(safeStorage.getItem('mfx_shake_enabled') === 'true');
@@ -63,6 +64,10 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
   useEffect(() => {
     isRecordingRef.current = isRecording;
   }, [isRecording]);
+
+  useEffect(() => {
+    isSintonizadoRef.current = isSintonizado;
+  }, [isSintonizado]);
 
   useEffect(() => {
     pendingTextsRef.current = pendingTexts;
@@ -136,14 +141,15 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
     try {
       // Solicitar permiso de sensor de movimiento (Acelerómetro) para iOS si es necesario
       if (typeof DeviceMotionEvent !== 'undefined' && typeof DeviceMotionEvent.requestPermission === 'function') {
-        DeviceMotionEvent.requestPermission()
-          .then(permissionState => {
-            console.log("DeviceMotion permission:", permissionState);
-            if (permissionState === 'granted') {
-              // El listener ya se activa mediante shakeEnabledRef
-            }
-          })
-          .catch(err => console.warn("Error solicitando permisos del acelerómetro:", err));
+        try {
+          DeviceMotionEvent.requestPermission()
+            .then(permissionState => {
+              console.log("DeviceMotion permission:", permissionState);
+            })
+            .catch(err => console.warn("Error solicitando permisos del acelerómetro:", err));
+        } catch (e) {
+          console.warn("Error síncrono al solicitar permisos del acelerómetro:", e);
+        }
       }
 
       // Crear y reproducir un bucle de audio silencioso real de 10s (public/silence.wav)
@@ -156,13 +162,23 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
       
       audio.play().then(() => {
         console.log("🚀 Canal táctil enlazado. Bucle de silencio de 10s activo.");
-        playRogerBeep(); // Pitido corto premium de confirmación de sintonización
+        try {
+          playRogerBeep(); // Pitido corto premium de confirmación de sintonización
+        } catch (e) {
+          console.warn("Error al reproducir beep de sintonización:", e);
+        }
         
         if ('mediaSession' in navigator) {
-          navigator.mediaSession.metadata = new MediaMetadata({
-            title: 'MFX Walkie-Talkie',
-            artist: 'Canal ' + session.channel,
-          });
+          try {
+            if (typeof MediaMetadata !== 'undefined') {
+              navigator.mediaSession.metadata = new MediaMetadata({
+                title: 'MFX Walkie-Talkie',
+                artist: 'Canal ' + session.channel,
+              });
+            }
+          } catch (e) {
+            console.warn("Error setting mediaSession metadata:", e);
+          }
           
           // Usamos una envoltura estable que invoque la referencia dinámica para evitar cierres obsoletos
           const mediaSessionWrapper = (details) => {
@@ -171,13 +187,20 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
             }
           };
 
-          navigator.mediaSession.setActionHandler('play', mediaSessionWrapper);
-          navigator.mediaSession.setActionHandler('pause', mediaSessionWrapper);
-          navigator.mediaSession.setActionHandler('toggleplay', mediaSessionWrapper);
-          navigator.mediaSession.setActionHandler('stop', mediaSessionWrapper);
-          navigator.mediaSession.setActionHandler('nexttrack', mediaSessionWrapper);
-          navigator.mediaSession.setActionHandler('previoustrack', mediaSessionWrapper);
-          navigator.mediaSession.playbackState = 'playing';
+          const actions = ['play', 'pause', 'toggleplay', 'stop', 'nexttrack', 'previoustrack'];
+          actions.forEach(action => {
+            try {
+              navigator.mediaSession.setActionHandler(action, mediaSessionWrapper);
+            } catch (e) {
+              console.warn(`Error setting mediaSession action handler for "${action}":`, e);
+            }
+          });
+
+          try {
+            navigator.mediaSession.playbackState = 'playing';
+          } catch (e) {
+            console.warn("Error setting mediaSession playbackState:", e);
+          }
         }
         setIsSintonizado(true);
         setStatusMsg("Sintonizado | Standby");
@@ -190,8 +213,9 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
 
       silentAudioRef.current = audio;
     } catch (e) {
-      console.error(e);
+      console.error("Error síncrono en sintonizarHeadset:", e);
       setIsSintonizado(true);
+      setStatusMsg("Standby");
     }
   };
 
@@ -215,7 +239,7 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
     setSocket(newSocket);
 
     newSocket.on('connect', () => {
-      if (isSintonizado) {
+      if (isSintonizadoRef.current) {
         setStatusMsg("Sintonizado | Standby");
       } else {
         setStatusMsg("Conectado | Standby");
@@ -252,7 +276,11 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
       }
 
       audioPlayerRef.current.onended = () => {
-        playRogerBeep();
+        try {
+          playRogerBeep();
+        } catch (e) {
+          console.warn("Error al reproducir beep de audio finalizado:", e);
+        }
         setIsReceiving(false);
         setStatusMsg("Standby");
       };
@@ -260,7 +288,11 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
 
     // Recibir mensajes de texto para despacho
     newSocket.on('text_broadcast', (data) => {
-      playTextPing();
+      try {
+        playTextPing();
+      } catch (e) {
+        console.warn("Error al reproducir ping de texto:", e);
+      }
       setPendingTexts(prev => [...prev, data]);
       setStatusMsg(`¡NUEVO MENSAJE DE TEXTO!`);
     });
@@ -341,34 +373,60 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
     window.addEventListener('devicemotion', handleMotion);
 
     return () => {
-      if (wakeLock) wakeLock.release();
-      newSocket.disconnect();
+      try {
+        if (wakeLock) {
+          wakeLock.release().catch(err => console.warn("Error releasing wake lock:", err));
+        }
+      } catch (e) {
+        console.warn("Error calling wakeLock.release:", e);
+      }
+      try {
+        newSocket.disconnect();
+      } catch (e) {
+        console.warn("Error disconnecting socket in cleanup:", e);
+      }
       socketRef.current = null;
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('keydown', handleMediaKeys);
       window.removeEventListener('devicemotion', handleMotion);
+      
       if ('mediaSession' in navigator) {
-        navigator.mediaSession.setActionHandler('play', null);
-        navigator.mediaSession.setActionHandler('pause', null);
-        navigator.mediaSession.setActionHandler('toggleplay', null);
-        navigator.mediaSession.setActionHandler('stop', null);
-        navigator.mediaSession.setActionHandler('nexttrack', null);
-        navigator.mediaSession.setActionHandler('previoustrack', null);
+        const actions = ['play', 'pause', 'toggleplay', 'stop', 'nexttrack', 'previoustrack'];
+        actions.forEach(action => {
+          try {
+            navigator.mediaSession.setActionHandler(action, null);
+          } catch (e) {
+            console.warn(`Error clearing mediaSession handler for "${action}":`, e);
+          }
+        });
       }
+      
       if (silentAudioRef.current) {
-        silentAudioRef.current.pause();
+        try {
+          silentAudioRef.current.pause();
+        } catch (e) {
+          console.warn("Error pausing silent audio in cleanup:", e);
+        }
         silentAudioRef.current = null;
       }
     };
-  }, [session, isSintonizado]);
+  }, [session]);
 
   const readPendingTexts = () => {
     if (pendingTextsRef.current.length === 0) return;
     
+    const synth = window.speechSynthesis;
+    if (!synth) {
+      console.warn("SpeechSynthesis no está soportado en este navegador.");
+      setIsReadingTTS(false);
+      setPendingTexts([]);
+      setStatusMsg("Standby");
+      return;
+    }
+    
     setIsReadingTTS(true);
     setStatusMsg("Leyendo Despacho...");
-    const synth = window.speechSynthesis;
     let utteranceIndex = 0;
     const currentTexts = [...pendingTextsRef.current];
 
@@ -378,7 +436,11 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
         setIsReadingTTS(false);
         setPendingTexts([]);
         setStatusMsg("Standby");
-        playRogerBeep(); // Avisar que terminó de leer
+        try {
+          playRogerBeep(); // Avisar que terminó de leer
+        } catch (e) {
+          console.warn("Error al reproducir beep tras finalizar TTS:", e);
+        }
         return;
       }
 
@@ -442,7 +504,7 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
     }
 
     if (sosActive) return; // Si hay SOS, debe reconocerlo primero
-    if (window.speechSynthesis.speaking) return; // Evitar pisar la lectura
+    if (window.speechSynthesis && window.speechSynthesis.speaking) return; // Evitar pisar la lectura
     
     const now = Date.now();
     const timeSinceLastHUD = now - lastHUDPressTimeRef.current;
