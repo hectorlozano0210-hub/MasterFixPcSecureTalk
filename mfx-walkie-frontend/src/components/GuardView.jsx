@@ -15,6 +15,7 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
   const [logs, setLogs] = useState([]); // Historial local
   const [sosActive, setSosActive] = useState(false);
   const [msgCount, setMsgCount] = useState(0);
+  const [isStealthMode, setIsStealthMode] = useState(false);
   
   const socketRef = useRef(null);
   const isTouchActiveRef = useRef(false);
@@ -98,6 +99,12 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
   // Cualquier secuencia de 2 o más clics rápidos y seguidos activará de inmediato la alarma en el monitor
   const handleHeadsetClick = (details) => {
     console.log(`[MediaSession] Headset clicked, action: ${details?.action || 'unknown'}`);
+    
+    // Forzar reconexión síncrona si el socket se desconectó
+    if (socketRef.current && !socketRef.current.connected) {
+      console.log("[SOCKET] Manos libres pulsado pero desconectado. Intentando reconexión inmediata...");
+      socketRef.current.connect();
+    }
     
     // Forzar que el audio silencioso siga reproduciéndose para que el sistema operativo no descarte la sesión multimedia
     if (silentAudioRef.current) {
@@ -559,6 +566,13 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
 
   const startRecording = async () => {
     if (isRecordingRef.current) return;
+
+    // Forzar reconexión síncrona si el socket se desconectó en segundo plano
+    if (socketRef.current && !socketRef.current.connected) {
+      console.log("[SOCKET] Detectada desconexión al iniciar PTT. Reconectando de inmediato...");
+      setStatusMsg("Reconectando...");
+      socketRef.current.connect();
+    }
     
     // Verificación de Licencia Free
     if (session.license?.type === 'free' && msgCount >= 10) {
@@ -735,6 +749,131 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
     );
   }
 
+  if (isStealthMode) {
+    return (
+      <div 
+        style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: '#000000',
+          zIndex: 9999,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          userSelect: 'none',
+          touchAction: 'none'
+        }}
+        onMouseDown={handleMainButtonPress}
+        onMouseUp={handleMainButtonRelease}
+        onMouseLeave={handleMainButtonRelease}
+        onTouchStart={handleMainButtonPress}
+        onTouchEnd={handleMainButtonRelease}
+      >
+        {/* Botón de salida ultra-tenue */}
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setIsStealthMode(false);
+            if (isRecordingRef.current) stopRecording();
+          }}
+          style={{
+            position: 'absolute',
+            top: '20px',
+            right: '20px',
+            background: 'transparent',
+            border: '1px solid rgba(0, 255, 204, 0.2)',
+            color: 'rgba(0, 255, 204, 0.3)',
+            borderRadius: '50%',
+            width: '40px',
+            height: '40px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            cursor: 'pointer',
+            fontSize: '18px',
+            fontWeight: 'bold',
+            zIndex: 10000,
+            transition: 'all 0.2s'
+          }}
+        >
+          ×
+        </button>
+
+        {/* LED indicador de estado táctico ultra-dim */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '20px' }}>
+          <div 
+            style={{
+              width: '16px',
+              height: '16px',
+              borderRadius: '50%',
+              backgroundColor: isRecording 
+                ? 'rgba(255, 51, 102, 0.25)' 
+                : isReceiving || isReadingTTS
+                ? 'rgba(57, 255, 20, 0.25)'  
+                : pendingTexts.length > 0 
+                ? 'rgba(255, 204, 0, 0.25)'  
+                : sosActive 
+                ? 'rgba(255, 51, 102, 0.4)'
+                : 'rgba(0, 240, 255, 0.1)',  
+              boxShadow: isRecording 
+                ? '0 0 15px rgba(255, 51, 102, 0.4)' 
+                : isReceiving || isReadingTTS
+                ? '0 0 15px rgba(57, 255, 20, 0.4)' 
+                : pendingTexts.length > 0 
+                ? '0 0 15px rgba(255, 204, 0, 0.4)' 
+                : sosActive 
+                ? '0 0 20px rgba(255, 51, 102, 0.6)' 
+                : '0 0 8px rgba(0, 240, 255, 0.1)',
+              animation: (isRecording || isReceiving || isReadingTTS || pendingTexts.length > 0 || sosActive) 
+                ? 'stealth-pulse 1.2s infinite ease-in-out' 
+                : 'none',
+              transition: 'all 0.5s ease'
+            }}
+          />
+          <style>{`
+            @keyframes stealth-pulse {
+              0% { transform: scale(1); opacity: 0.4; }
+              50% { transform: scale(1.3); opacity: 1; }
+              100% { transform: scale(1); opacity: 0.4; }
+            }
+          `}</style>
+          
+          <span style={{ 
+            color: 'rgba(255, 255, 255, 0.08)', 
+            fontSize: '11px', 
+            letterSpacing: '3px', 
+            textTransform: 'uppercase',
+            textAlign: 'center',
+            lineHeight: '1.6',
+            pointerEvents: 'none'
+          }}>
+            [ MODO SIGILO ACTIVO ]<br/>
+            {pendingTexts.length > 0 && !isReadingTTS ? (
+              <span style={{ color: 'rgba(255, 204, 0, 0.2)', letterSpacing: '1px' }}>
+                TOQUE PARA LEER DESPACHOS PENDIENTES
+              </span>
+            ) : isRecording ? (
+              <span style={{ color: 'rgba(255, 51, 102, 0.2)', letterSpacing: '1px' }}>
+                TRANSMITIENDO VOZ...
+              </span>
+            ) : isReceiving || isReadingTTS ? (
+              <span style={{ color: 'rgba(57, 255, 20, 0.2)', letterSpacing: '1px' }}>
+                ESCUCHANDO CENTRAL...
+              </span>
+            ) : (
+              <span>TOQUE LA PANTALLA EN CUALQUIER LADO PARA HABLAR</span>
+            )}
+          </span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex-column" style={{ minHeight: '100vh', padding: '20px', justifyContent: 'space-between', backgroundColor: sosActive ? 'rgba(255, 0, 0, 0.2)' : 'transparent', transition: 'background-color 0.5s' }}>
       <header className="glass-panel" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '15px 20px' }}>
@@ -821,6 +960,32 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
               ? "✓ Activo. Sacude el celular fuertemente 3 veces seguidas para disparar la alarma." 
               : "Desactivado. Útil si vas a correr o hacer movimientos bruscos."}
           </small>
+          
+          <hr style={{ borderColor: 'var(--border-glass)', margin: '8px 0' }} />
+          
+          <button
+            type="button"
+            onClick={() => setIsStealthMode(true)}
+            style={{
+              width: '100%',
+              background: 'linear-gradient(135deg, rgba(0, 0, 0, 0.6) 0%, rgba(20, 20, 25, 0.8) 100%)',
+              border: '1px solid var(--neon-cyan)',
+              color: 'var(--neon-cyan)',
+              padding: '10px',
+              borderRadius: '6px',
+              fontSize: '12px',
+              fontWeight: 'bold',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+              boxShadow: '0 0 8px rgba(0, 255, 204, 0.15)',
+              transition: 'all 0.2s'
+            }}
+          >
+            <Radio size={14} /> MODO SIGILO (AHORRO BATERÍA)
+          </button>
         </div>
 
         <p className="text-secondary" style={{ marginTop: '25px', textAlign: 'center', fontSize: '13px', maxWidth: '300px', lineHeight: '1.5' }}>
