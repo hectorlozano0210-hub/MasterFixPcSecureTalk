@@ -95,6 +95,38 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
     fetchCount();
   }, []);
 
+  const enterStealthMode = () => {
+    setIsStealthMode(true);
+    // Intentar activar pantalla completa real para ocultar barras del navegador móvil
+    try {
+      const docEl = document.documentElement;
+      if (docEl.requestFullscreen) {
+        docEl.requestFullscreen().catch(err => console.warn("Fullscreen error:", err));
+      } else if (docEl.webkitRequestFullscreen) { /* iOS/Safari */
+        docEl.webkitRequestFullscreen().catch(err => console.warn("Fullscreen error:", err));
+      } else if (docEl.msRequestFullscreen) {
+        docEl.msRequestFullscreen().catch(err => console.warn("Fullscreen error:", err));
+      }
+    } catch (e) {
+      console.warn("Fullscreen API no soportado:", e);
+    }
+  };
+
+  const exitStealthMode = () => {
+    setIsStealthMode(false);
+    if (isRecordingRef.current) stopRecording();
+    // Salir de pantalla completa si está activa
+    try {
+      if (document.exitFullscreen && document.fullscreenElement) {
+        document.exitFullscreen().catch(err => console.warn("Exit Fullscreen error:", err));
+      } else if (document.webkitExitFullscreen && document.webkitFullscreenElement) {
+        document.webkitExitFullscreen().catch(err => console.warn("Exit Fullscreen error:", err));
+      }
+    } catch (e) {
+      console.warn("Error al salir de pantalla completa:", e);
+    }
+  };
+
   // Lógica para Manos Libres (MediaSession API y Teclas Multimedia) con Alerta SOS Antipánico
   // Cualquier secuencia de 2 o más clics rápidos y seguidos activará de inmediato la alarma en el monitor
   const handleHeadsetClick = (details) => {
@@ -756,8 +788,8 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
           position: 'fixed',
           top: 0,
           left: 0,
-          right: 0,
-          bottom: 0,
+          width: '100vw',
+          height: '100dvh', // Usar Dynamic Viewport Height para cubrir barras en celular
           background: '#000000',
           zIndex: 9999,
           display: 'flex',
@@ -765,7 +797,9 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
           alignItems: 'center',
           justifyContent: 'center',
           userSelect: 'none',
-          touchAction: 'none'
+          touchAction: 'none',
+          margin: 0,
+          padding: 0
         }}
         onMouseDown={handleMainButtonPress}
         onMouseUp={handleMainButtonRelease}
@@ -773,33 +807,39 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
         onTouchStart={handleMainButtonPress}
         onTouchEnd={handleMainButtonRelease}
       >
-        {/* Botón de salida ultra-tenue */}
+        {/* Botón de salida con total detención de propagación de eventos táctiles/mouse */}
         <button
           type="button"
+          onMouseDown={(e) => e.stopPropagation()}
+          onMouseUp={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+          onTouchEnd={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation();
-            setIsStealthMode(false);
-            if (isRecordingRef.current) stopRecording();
+            exitStealthMode();
           }}
           style={{
             position: 'absolute',
             top: '20px',
             right: '20px',
-            background: 'transparent',
-            border: '1px solid rgba(0, 255, 204, 0.2)',
-            color: 'rgba(0, 255, 204, 0.3)',
+            background: 'rgba(20, 20, 25, 0.7)',
+            border: '1px solid rgba(0, 255, 204, 0.3)',
+            color: 'rgba(0, 255, 204, 0.6)',
             borderRadius: '50%',
-            width: '40px',
-            height: '40px',
+            width: '44px',
+            height: '44px',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
             cursor: 'pointer',
-            fontSize: '18px',
+            fontSize: '24px',
             fontWeight: 'bold',
             zIndex: 10000,
-            transition: 'all 0.2s'
+            transition: 'all 0.2s',
+            boxShadow: '0 0 10px rgba(0, 255, 204, 0.1)'
           }}
+          onMouseEnter={(e) => { e.target.style.color = '#00ffcc'; e.target.style.borderColor = '#00ffcc'; }}
+          onMouseLeave={(e) => { e.target.style.color = 'rgba(0, 255, 204, 0.6)'; e.target.style.borderColor = 'rgba(0, 255, 204, 0.3)'; }}
         >
           ×
         </button>
@@ -965,7 +1005,7 @@ export default function GuardView({ session, onLogout, onUpgrade }) {
           
           <button
             type="button"
-            onClick={() => setIsStealthMode(true)}
+            onClick={enterStealthMode}
             style={{
               width: '100%',
               background: 'linear-gradient(135deg, rgba(0, 0, 0, 0.6) 0%, rgba(20, 20, 25, 0.8) 100%)',
